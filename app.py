@@ -10,12 +10,10 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- CUSTOM CSS FOR PROFESSIONAL LOOK ---
+# --- CUSTOM CSS ---
 st.markdown("""
     <style>
-    .main {
-        background-color: #f5f7f9;
-    }
+    .main { background-color: #f5f7f9; }
     .stButton>button {
         width: 100%;
         border-radius: 5px;
@@ -24,48 +22,58 @@ st.markdown("""
         color: white;
         font-weight: bold;
     }
-    .stMetric {
-        background-color: #ffffff;
-        padding: 15px;
-        border-radius: 10px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    }
     </style>
     """, unsafe_allow_html=True)
 
-# --- LOAD MODELS ---
-@st.cache_resource # Isse baar-baar load nahi hoga (Performance boost)
+# --- LOAD ASSETS ---
+@st.cache_resource
 def load_assets():
+    # Make sure these filenames match your GitHub files exactly
     model = joblib.load('heart_model.pkl')
     scaler = joblib.load('scaler.pkl')
     return model, scaler
 
-model, scaler = load_assets()
+try:
+    model, scaler = load_assets()
+except Exception as e:
+    st.error(f"Error loading model/scaler: {e}. Check if files exist in repo.")
 
-# --- SIDEBAR (Patient Info Summary) ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/822/822118.png", width=100)
     st.title("HeartCare AI")
-    st.info("Ye model 300,000+ records par trained hai. Iska use sirf awareness ke liye karein.")
+    st.info("Trained on 300,000+ records. Use for awareness only.")
     st.divider()
     st.warning("⚠️ Disclaimer: Consult a doctor for medical advice.")
 
-# --- MAIN PAGE LAYOUT ---
+# --- MAIN PAGE ---
 st.title("🏥 Smart Heart Disease Diagnostic Tool")
 st.write("Fill the details below to analyze heart health using Machine Learning.")
 
-# Form for better organization
+# --- AGE CATEGORY MAPPING (Fixing the 12 limit issue) ---
+age_labels = [
+    "18-24", "25-29", "30-34", "35-39", "40-44", 
+    "45-49", "50-54", "55-59", "60-64", "65-69", 
+    "70-74", "75-79", "80 or older"
+]
+
 with st.form("diagnosis_form"):
     col1, col2, col3 = st.columns(3)
 
     with col1:
         st.subheader("🧬 Physical Body")
-        bmi = st.number_input("BMI (Body Mass Index)", 10.0, 60.0, 25.0, help="Weight in kg / (height in m)^2")
+        bmi = st.number_input("BMI (Body Mass Index)", 10.0, 60.0, 25.0)
         sex = st.selectbox("Biological Sex", ["Male", "Female"])
-        age = st.select_slider("Age Category", options=range(0, 13), value=5, 
-                               help="0=18-24, 12=80 or older")
-        gen_health = st.select_slider("Overall Health Feel", options=range(0, 5), value=3,
-                                      help="0: Poor, 4: Excellent")
+        
+        # FIX: Ab user ko range dikhegi (0-12 ke bajaye years dikhenge)
+        selected_age = st.select_slider("Age Category", options=age_labels, value="40-44")
+        # Background mein index (0-12) nikalna
+        age_index = age_labels.index(selected_age)
+        
+        gen_health = st.select_slider("Overall Health Feel", options=["Poor", "Fair", "Good", "Very Good", "Excellent"], value="Good")
+        # Convert health to numbers (0-4)
+        health_map = {"Poor": 0, "Fair": 1, "Good": 2, "Very Good": 3, "Excellent": 4}
+        gen_health_num = health_map[gen_health]
 
     with col2:
         st.subheader("🚬 Lifestyle Factors")
@@ -82,12 +90,10 @@ with st.form("diagnosis_form"):
         skin_cancer = st.checkbox("Skin Cancer")
         diabetic = st.selectbox("Diabetes Status", ["No", "Yes", "No, borderline", "Yes (during pregnancy)"])
 
-    # Submit button
     submitted = st.form_submit_button("GENERATE HEALTH REPORT")
 
 # --- DATA PROCESSING ---
 def get_clean_input():
-    # Diabetic Status logic
     is_diabetic = 1 if diabetic == "Yes" else 0
     
     d = {
@@ -95,11 +101,11 @@ def get_clean_input():
         'Smoking': 1 if smoking == "Yes" else 0,
         'AlcoholDrinking': 1 if alcohol == "Yes" else 0,
         'Stroke': 1 if stroke else 0,
-        'DiffWalking': 0,
+        'DiffWalking': 0, # Default value
         'Sex': 1 if sex == "Male" else 0,
-        'AgeCategory': age,
+        'AgeCategory': age_index, # Fixed index
         'PhysicalActivity': 1 if phys_act == "Yes" else 0,
-        'GenHealth': gen_health,
+        'GenHealth': gen_health_num,
         'SleepTime': sleep,
         'Asthma': 1 if asthma else 0,
         'KidneyDisease': 1 if kidney else 0,
@@ -109,7 +115,8 @@ def get_clean_input():
     }
     
     input_df = pd.DataFrame([d])
-    # Match columns with scaler
+    
+    # Ensuring column order matches scaler
     for col in scaler.feature_names_in_:
         if col not in input_df.columns:
             input_df[col] = 0
@@ -127,7 +134,7 @@ if submitted:
     res_col1, res_col2 = st.columns([1, 2])
 
     with res_col1:
-        if prediction == 1:
+        if prediction == 1 or probability > 0.5:
             st.error("### Result: POSITIVE")
             st.metric("Risk Level", "HIGH", delta="Action Required", delta_color="inverse")
         else:
@@ -137,9 +144,9 @@ if submitted:
     with res_col2:
         st.write("### Analysis Breakdown")
         st.progress(probability)
-        st.write(f"The model has calculated a **{probability:.1%}** probability of heart complications based on your inputs.")
+        st.write(f"The model has calculated a **{probability:.1%}** probability of heart complications.")
         
         if probability > 0.5:
-            st.warning("📣 Recommendation: Please schedule a checkup with a cardiologist as soon as possible.")
+            st.warning("📣 Recommendation: Please schedule a checkup with a cardiologist.")
         else:
-            st.info("📣 Recommendation: Your results look good! Continue maintaining a balanced diet and regular exercise.")
+            st.info("📣 Recommendation: Maintain a balanced diet and regular exercise.")
